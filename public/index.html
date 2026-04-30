@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>安心守护 - 家属端</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
@@ -14,6 +16,11 @@
         .header-row { display: flex; justify-content: space-between; align-items: center; }
         .back-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
         .back-btn:hover { background: rgba(255,255,255,0.3); }
+
+        .tab-bar { display: flex; background: white; border-bottom: 1px solid #eee; position: sticky; top: 72px; z-index: 99; }
+        .tab { flex: 1; padding: 14px; text-align: center; font-size: 14px; font-weight: 500; color: #666; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; }
+        .tab.active { color: #667eea; border-bottom-color: #667eea; }
+        .tab:hover { background: #f8f8f8; }
 
         .container { max-width: 600px; margin: 0 auto; padding: 16px; }
         @media (min-width: 900px) { .container { max-width: 960px; } }
@@ -56,7 +63,6 @@
         .alert-text { font-size: 13px; color: #e65100; flex: 1; }
         .alert-banner.danger .alert-text { color: #c62828; }
 
-        /* 详情页PC两栏布局 */
         .detail-columns { display: flex; flex-direction: column; gap: 12px; }
         @media (min-width: 900px) { .detail-columns { flex-direction: row; flex-wrap: wrap; } .detail-columns > .detail-section { flex: 1 1 calc(50% - 6px); min-width: 0; } }
 
@@ -97,6 +103,27 @@
         .loading { text-align: center; padding: 40px; color: #999; }
         .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid #e0e0e0; border-top-color: #667eea; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 地图页样式 */
+        #list-container { display: none; }
+        #list-container.active { display: block; }
+        #map-container { display: none; }
+        #map-container.active { display: block; }
+        #detail-container { display: none; }
+        #detail-container.active { display: block; }
+
+        .map-wrap { height: calc(100vh - 140px); min-height: 500px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+        #map { width: 100%; height: 100%; }
+
+        .map-empty { text-align: center; padding: 80px 20px; color: #999; }
+
+        /* Leaflet 自定义弹窗 */
+        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+        .leaflet-popup-content { margin: 12px 16px; font-family: inherit; }
+        .popup-name { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+        .popup-status { font-size: 13px; color: #666; line-height: 1.8; }
+        .popup-status .online { color: #4CAF50; font-weight: 500; }
+        .popup-status .offline { color: #f44336; font-weight: 500; }
     </style>
 </head>
 <body>
@@ -109,15 +136,39 @@
             <button class="back-btn" id="back-btn" onclick="goBack()" style="display:none">← 返回</button>
         </div>
     </div>
-    <div class="container" id="app">
-        <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
+
+    <div class="tab-bar" id="tab-bar">
+        <div class="tab active" onclick="switchTab('list')">📋 设备列表</div>
+        <div class="tab" onclick="switchTab('map')">🗺️ 设备地图</div>
     </div>
+
+    <div id="list-container" class="active">
+        <div class="container" id="app">
+            <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div class="container" style="padding:16px;max-width:1400px;">
+            <div class="map-wrap">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="detail-container">
+        <div class="container" id="detail-app"></div>
+    </div>
+
     <button id="refresh-btn" onclick="refresh()" title="刷新">🔄</button>
 
     <script>
     const API = window.location.origin + '/api';
     let currentView = 'list';
     let currentDeviceId = null;
+    let currentTab = 'list';
+    let map = null;
+    let markers = [];
 
     async function fetchJSON(url) { const res = await fetch(url); return res.json(); }
 
@@ -161,12 +212,93 @@
 
     function dot(ok) { return `<span class="dot ${ok?'green':'red'}"></span>`; }
 
+    // ============ Tab 切换 ============
+    function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('.tab').forEach((el, i) => {
+            el.classList.toggle('active', (i === 0 && tab === 'list') || (i === 1 && tab === 'map'));
+        });
+        document.getElementById('list-container').classList.toggle('active', tab === 'list');
+        document.getElementById('map-container').classList.toggle('active', tab === 'map');
+        document.getElementById('detail-container').classList.remove('active');
+        document.getElementById('back-btn').style.display = 'none';
+        currentView = 'list';
+        currentDeviceId = null;
+
+        if (tab === 'list') {
+            document.getElementById('header-title').textContent = '安心守护';
+            document.getElementById('header-subtitle').textContent = '家属端监控面板';
+            renderList();
+        } else if (tab === 'map') {
+            document.getElementById('header-title').textContent = '安心守护';
+            document.getElementById('header-subtitle').textContent = '设备位置地图';
+            initMap();
+        }
+    }
+
+    // ============ 地图页 ============
+    async function initMap() {
+        if (!map) {
+            map = L.map('map', { zoomControl: true }).setView([35.86, 104.19], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 18
+            }).addTo(map);
+        }
+
+        // 清除旧标记
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+
+        const devices = await fetchJSON(`${API}/devices`);
+        const bounds = [];
+        let hasLocation = false;
+
+        for (const d of devices) {
+            const detail = await fetchJSON(`${API}/device/${d.deviceId}/latest`);
+            if (detail.latitude && detail.longitude) {
+                hasLocation = true;
+                const lat = detail.latitude;
+                const lng = detail.longitude;
+                bounds.push([lat, lng]);
+
+                const color = d.isOnline ? '#4CAF50' : '#f44336';
+                const icon = L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;color:white;">📱</div>`,
+                    className: '',
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                });
+
+                const marker = L.marker([lat, lng], { icon }).addTo(map);
+                const batteryColor = batColor(detail.batteryPercent);
+                marker.bindPopup(`
+                    <div class="popup-name">${d.elderName}</div>
+                    <div class="popup-status">
+                        状态: <span class="${d.isOnline?'online':'offline'}">${d.isOnline?'在线':'离线'}</span><br>
+                        电量: <span style="color:${batteryColor}">${detail.batteryPercent}%</span> ${detail.isCharging?'⚡':''}<br>
+                        网络: ${detail.networkStatus}<br>
+                        WiFi: ${detail.wifiSsid || '未连接'}<br>
+                        铃声: ${detail.ringVolume}/${detail.ringVolumeMax}<br>
+                        最后上报: ${formatTime(d.lastOnline)}
+                    </div>
+                `, { maxWidth: 250 });
+
+                markers.push(marker);
+            }
+        }
+
+        if (hasLocation && bounds.length > 0) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+        }
+
+        // 强制刷新地图尺寸
+        setTimeout(() => map.invalidateSize(), 100);
+    }
+
+    // ============ 列表页 ============
     async function renderList() {
         const app = document.getElementById('app');
-        document.getElementById('header-title').textContent = '安心守护';
-        document.getElementById('header-subtitle').textContent = '家属端监控面板';
-        document.getElementById('back-btn').style.display = 'none';
-
         const devices = await fetchJSON(`${API}/devices`);
         if (!devices.length) { app.innerHTML = '<div class="empty"><div class="empty-icon">📱</div><div class="empty-text">暂无设备数据</div><div class="empty-hint">请在手机端点击"刷新并上报状态"</div></div>'; return; }
 
@@ -187,12 +319,13 @@
         for (const d of detailed) {
             const det = d.detail, alerts = d.alerts;
             const da = alerts.filter(a=>a.l==='d'), wa = alerts.filter(a=>a.l==='w');
+            const hasLoc = det.latitude && det.longitude;
 
             html += `<div class="device-card" onclick="showDetail('${d.deviceId}')">
                 ${da.length ? `<div class="alert-banner danger"><span class="alert-icon">🚨</span><span class="alert-text">${da.map(a=>a.t).join('、')}</span></div>` : ''}
                 ${wa.length ? `<div class="alert-banner"><span class="alert-icon">⚠️</span><span class="alert-text">${wa.map(a=>a.t).join('、')}</span></div>` : ''}
                 <div class="device-header">
-                    <div><div class="device-name">${d.elderName}</div><div class="device-time">${formatTime(d.lastOnline)}</div></div>
+                    <div><div class="device-name">${d.elderName} ${hasLoc?'📍':''}</div><div class="device-time">${formatTime(d.lastOnline)}</div></div>
                     <span style="padding:6px 14px;border-radius:20px;font-size:13px;${d.isOnline?'background:#E8F5E9;color:#2E7D32':'background:#FFEBEE;color:#C62828'}">${d.isOnline?'🟢 在线':'🔴 离线'}</span>
                 </div>
                 <div class="device-body"><div class="status-grid">
@@ -207,15 +340,20 @@
         app.innerHTML = html;
     }
 
+    // ============ 详情页 ============
     async function showDetail(deviceId) {
         currentView = 'detail'; currentDeviceId = deviceId;
+        document.getElementById('list-container').classList.remove('active');
+        document.getElementById('map-container').classList.remove('active');
+        document.getElementById('detail-container').classList.add('active');
+        document.getElementById('back-btn').style.display = 'block';
+
         const data = await fetchJSON(`${API}/device/${deviceId}/latest`);
         const events = await fetchJSON(`${API}/device/${deviceId}/events?limit=50`);
         const alerts = getAlerts(data);
 
         document.getElementById('header-title').textContent = data.elderName || '未知设备';
         document.getElementById('header-subtitle').textContent = `${data.brand} ${data.model} · ${data.isOnline?'在线':'离线'}`;
-        document.getElementById('back-btn').style.display = 'block';
 
         let html = '';
         if (alerts.length) {
@@ -274,7 +412,7 @@
             <div class="detail-row"><span class="detail-label">后台服务</span><span class="detail-value">${dot(data.appMonitorRunning)} ${data.appMonitorRunning?'运行中':'未运行'}</span></div>
         </div></div>`;
 
-        html += '</div>'; // detail-columns close
+        html += '</div>';
 
         html += `<div class="detail-section" style="margin-top:12px"><div class="section-title">📋 最近事件 (${events.length})</div>`;
         if (!events.length) html += '<div style="padding:20px;text-align:center;color:#999;font-size:13px">暂无事件记录</div>';
@@ -285,17 +423,35 @@
         }
         html += '</div>';
 
-        document.getElementById('app').innerHTML = html;
+        document.getElementById('detail-app').innerHTML = html;
         window.scrollTo(0, 0);
     }
 
-    function goBack() { currentView = 'list'; currentDeviceId = null; renderList(); }
+    function goBack() {
+        document.getElementById('detail-container').classList.remove('active');
+        document.getElementById('back-btn').style.display = 'none';
+        document.getElementById('header-title').textContent = '安心守护';
+        document.getElementById('header-subtitle').textContent = currentTab === 'map' ? '设备位置地图' : '家属端监控面板';
+
+        if (currentTab === 'list') {
+            document.getElementById('list-container').classList.add('active');
+            currentView = 'list';
+            renderList();
+        } else {
+            document.getElementById('map-container').classList.add('active');
+            currentView = 'list';
+            initMap();
+        }
+    }
+
     async function refresh() {
-        if (currentView === 'list') await renderList(); else if (currentDeviceId) await showDetail(currentDeviceId);
+        if (currentTab === 'list' && currentView === 'list') await renderList();
+        else if (currentTab === 'map' && currentView === 'list') await initMap();
+        else if (currentView === 'detail' && currentDeviceId) await showDetail(currentDeviceId);
     }
 
     renderList();
-    setInterval(() => { if (currentView === 'list') renderList(); }, 30000);
+    setInterval(() => { if (currentTab === 'list' && currentView === 'list') renderList(); }, 30000);
     </script>
 </body>
 </html>

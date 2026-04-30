@@ -1,5 +1,8 @@
 node_modules/
 data.json
+guardian.db
+guardian.db-wal
+guardian.db-shm
 .DS_Store
 server.log
 .env
