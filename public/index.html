@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>安心守护 - 家属端</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        window._AMapSecurityConfig = { securityJsCode: '075c18b3e14a1b29ffb564700deed200' }
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=6ab1df99588a9c4bf3c06319d53d5369&plugin=AMap.Scale,AMap.ToolBar,AMap.Geocoder"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
@@ -112,14 +114,27 @@
         #detail-container { display: none; }
         #detail-container.active { display: block; }
 
-        .map-wrap { height: calc(100vh - 140px); min-height: 500px; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+        .map-layout { display: flex; flex-direction: column; gap: 12px; }
+        .map-wrap { position: relative; height: clamp(280px, 45vh, 380px); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); min-width: 0; }
+        #map { width: 100%; height: 100%; }
         #map { width: 100%; height: 100%; }
 
         .map-empty { text-align: center; padding: 80px 20px; color: #999; }
+        .map-location-list { display: grid; gap: 8px; }
+        .map-location-item { width: 100%; border: 1px solid #e8eaf6; background: white; border-radius: 12px; padding: 10px 12px; text-align: left; cursor: pointer; transition: all 0.2s; box-shadow: 0 1px 6px rgba(0,0,0,0.04); }
+        .map-location-item:hover { border-color: #667eea; box-shadow: 0 4px 16px rgba(102,126,234,0.12); transform: translateY(-1px); }
+        .map-location-item.active { border-color: #667eea; background: #f5f7ff; }
+        .map-location-name { display: block; font-size: 13px; font-weight: 600; color: #333; }
+        .map-location-text { display: block; margin-top: 3px; font-size: 12px; color: #555; line-height: 1.45; }
+        .map-location-empty { background: white; border-radius: 12px; padding: 16px; color: #999; font-size: 13px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); }
+        @media (min-width: 900px) {
+            .map-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); align-items: stretch; }
+            .map-wrap { height: calc(100vh - 170px); min-height: 500px; }
+            .map-location-list { max-height: calc(100vh - 170px); overflow-y: auto; align-content: start; padding-right: 4px; }
+        }
 
         /* Leaflet 自定义弹窗 */
-        .leaflet-popup-content-wrapper { border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-        .leaflet-popup-content { margin: 12px 16px; font-family: inherit; }
+        .amap-info-content { border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); font-family: inherit; }
         .popup-name { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
         .popup-status { font-size: 13px; color: #666; line-height: 1.8; }
         .popup-status .online { color: #4CAF50; font-weight: 500; }
@@ -150,8 +165,13 @@
 
     <div id="map-container">
         <div class="container" style="padding:16px;max-width:1400px;">
-            <div class="map-wrap">
-                <div id="map"></div>
+            <div class="map-layout">
+                <div id="map-location-list" class="map-location-list">
+                    <div class="map-location-empty">正在加载设备位置...</div>
+                </div>
+                <div class="map-wrap">
+                    <div id="map"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -169,6 +189,15 @@
     let currentTab = 'list';
     let map = null;
     let markers = [];
+    let currentMapPoints = [];
+    let activeMapDeviceId = null;
+    let mapInfoWindow = null;
+    let geocoderInstance = null;
+    let mapRenderVersion = 0;
+    let mapInitSequenceId = 0;
+    let mapControlsReady = false;
+    const mapPointLookup = new Map();
+    const locationTextCache = new Map();
 
     async function fetchJSON(url) { const res = await fetch(url); return res.json(); }
 
@@ -211,9 +240,147 @@
     }
 
     function dot(ok) { return `<span class="dot ${ok?'green':'red'}"></span>`; }
+    function hasValidCoordinates(data) {
+        const lat = Number(data && data.latitude);
+        const lng = Number(data && data.longitude);
+        return Number.isFinite(lat) && Number.isFinite(lng);
+    }
+    function escapeHTML(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+    function getCoordinateKey(lat, lng) { return `${lat.toFixed(5)},${lng.toFixed(5)}`; }
+    function isOverseasCoordinate(lat, lng) {
+        return lng < 73 || lng > 136 || lat < 3 || lat > 54;
+    }
+    function nextPaint() {
+        return new Promise(function(resolve) {
+            requestAnimationFrame(function() {
+                requestAnimationFrame(resolve);
+            });
+        });
+    }
+    async function waitForMapContainerReady(maxAttempts) {
+        const attempts = maxAttempts || 20;
+        const mapContainer = document.getElementById('map-container');
+        const mapElement = document.getElementById('map');
+        for (let i = 0; i < attempts; i++) {
+            await nextPaint();
+            if (currentTab !== 'map' || currentView === 'detail') return false;
+            if (mapContainer.classList.contains('active') && mapElement.offsetWidth > 0 && mapElement.offsetHeight > 0) return true;
+        }
+        return false;
+    }
+    function fitMapToMarkers() {
+        if (!map) return;
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                map.resize();
+                if (markers.length > 0) map.setFitView(markers, false, [80, 80, 80, 80]);
+            });
+        });
+        setTimeout(function() {
+            if (!map || currentTab !== 'map' || currentView === 'detail') return;
+            map.resize();
+            if (markers.length > 0) map.setFitView(markers, false, [80, 80, 80, 80]);
+        }, 260);
+    }
+    function triggerMapInitSequence() {
+        const sequenceId = ++mapInitSequenceId;
+        initMap();
+        [300, 900].forEach(function(delay) {
+            setTimeout(function() {
+                if (sequenceId !== mapInitSequenceId) return;
+                if (currentTab !== 'map' || currentView === 'detail') return;
+                initMap();
+            }, delay);
+        });
+    }
+    function getGeocoder() {
+        if (geocoderInstance) return Promise.resolve(geocoderInstance);
+        return new Promise(function(resolve) {
+            AMap.plugin('AMap.Geocoder', function() {
+                geocoderInstance = new AMap.Geocoder({ radius: 1000, extensions: 'base' });
+                resolve(geocoderInstance);
+            });
+        });
+    }
+    function formatApproxLocation(regeocode) {
+        if (!regeocode) return '位置解析失败';
+        const comp = regeocode.addressComponent || {};
+        const streetNumber = comp.streetNumber || {};
+        const landmark = [streetNumber.street, streetNumber.number].filter(Boolean).join('');
+        const prefix = [comp.city && comp.city !== comp.province ? comp.city : '', comp.district, comp.township].filter(Boolean).join('');
+        return landmark ? `${prefix}${landmark}` : (regeocode.formattedAddress || prefix || '位置解析失败');
+    }
+    async function reverseGeocode(lat, lng) {
+        const key = getCoordinateKey(lat, lng);
+        if (locationTextCache.has(key)) return locationTextCache.get(key);
+        if (isOverseasCoordinate(lat, lng)) {
+            const text = '海外位置，暂不支持高德解析';
+            locationTextCache.set(key, text);
+            return text;
+        }
+        try {
+            const geocoder = await getGeocoder();
+            const text = await new Promise(function(resolve) {
+                geocoder.getAddress([lng, lat], function(status, result) {
+                    if (status === 'complete' && result && result.regeocode) resolve(formatApproxLocation(result.regeocode));
+                    else resolve('位置解析失败');
+                });
+            });
+            locationTextCache.set(key, text);
+            return text;
+        } catch (e) {
+            return '位置解析失败';
+        }
+    }
+    function renderMapLocationList(points) {
+        const container = document.getElementById('map-location-list');
+        if (!container) return;
+        if (!points.length) {
+            container.innerHTML = '<div class="map-location-empty">暂无设备位置信息</div>';
+            return;
+        }
+        container.innerHTML = points.map(function(point) {
+            const isActive = activeMapDeviceId === point.device.deviceId ? ' active' : '';
+            const locationText = point.locationText || '正在解析位置...';
+            return `<button type="button" class="map-location-item${isActive}" data-device-id="${escapeHTML(point.device.deviceId)}" onclick="focusMapDevice(this.dataset.deviceId)">
+                <span class="map-location-name">${escapeHTML(point.device.elderName || point.device.deviceId)}</span>
+                <span class="map-location-text">${escapeHTML(locationText)}</span>
+            </button>`;
+        }).join('');
+    }
+    function openMapInfoWindow(point) {
+        if (!map || !point || !point.marker) return;
+        if (!mapInfoWindow) mapInfoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -30) });
+        mapInfoWindow.setContent(point.infoContent);
+        mapInfoWindow.open(map, point.marker.getPosition());
+    }
+    function ensureMapControls() {
+        if (!map || mapControlsReady) return;
+        var scale = new AMap.Scale();
+        map.addControl(scale);
+
+        var toolbar = new AMap.ToolBar({
+            position: { right: '12px', top: '12px' }
+        });
+        map.addControl(toolbar);
+        mapControlsReady = true;
+    }
+    function focusMapDevice(deviceId) {
+        const point = mapPointLookup.get(deviceId);
+        if (!point || !map) return;
+        activeMapDeviceId = deviceId;
+        renderMapLocationList(currentMapPoints);
+        map.setZoomAndCenter(18, point.marker.getPosition());
+        openMapInfoWindow(point);
+    }
 
     // ============ Tab 切换 ============
     function switchTab(tab) {
+        mapInitSequenceId++;
         currentTab = tab;
         document.querySelectorAll('.tab').forEach((el, i) => {
             el.classList.toggle('active', (i === 0 && tab === 'list') || (i === 1 && tab === 'map'));
@@ -232,68 +399,130 @@
         } else if (tab === 'map') {
             document.getElementById('header-title').textContent = '安心守护';
             document.getElementById('header-subtitle').textContent = '设备位置地图';
-            initMap();
+            triggerMapInitSequence();
         }
     }
 
     // ============ 地图页 ============
     async function initMap() {
-        if (!map) {
-            map = L.map('map', { zoomControl: true }).setView([35.86, 104.19], 5);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap',
-                maxZoom: 18
-            }).addTo(map);
+        const isReady = await waitForMapContainerReady();
+        if (!isReady) return;
+        const version = ++mapRenderVersion;
+        document.getElementById('map-location-list').innerHTML = '<div class="map-location-empty">正在加载设备位置...</div>';
+        const devices = await fetchJSON(`${API}/devices`);
+        const detailedDevices = await Promise.all(devices.map(async function(device) {
+            const detail = await fetchJSON(`${API}/device/${device.deviceId}/latest`);
+            return { device, detail };
+        }));
+        if (version !== mapRenderVersion) return;
+
+        const points = detailedDevices.filter(function(item) {
+            return hasValidCoordinates(item.detail);
+        }).map(function(item) {
+            const latitude = Number(item.detail.latitude);
+            const longitude = Number(item.detail.longitude);
+            return {
+                device: item.device,
+                detail: item.detail,
+                latitude,
+                longitude,
+                locationText: locationTextCache.get(getCoordinateKey(latitude, longitude)) || ''
+            };
+        });
+
+        if (points.length === 0) {
+            currentMapPoints = [];
+            activeMapDeviceId = null;
+            mapPointLookup.clear();
+            markers.forEach(function(m) { map && map.remove(m); });
+            markers = [];
+            if (mapInfoWindow) mapInfoWindow.close();
+            renderMapLocationList([]);
+            if (!map) {
+                map = new AMap.Map('map', { zoom: 5, center: [116.4074, 39.9042], resizeEnable: true });
+                map.enableScrollWheelZoom(true);
+                ensureMapControls();
+            } else {
+                map.setZoomAndCenter(5, [116.4074, 39.9042]);
+                ensureMapControls();
+            }
+            fitMapToMarkers();
+            return;
         }
+
+        // 首次创建地图
+        if (!map) {
+            map = new AMap.Map('map', {
+                zoom: 14,
+                center: [points[0].longitude, points[0].latitude],
+                resizeEnable: true,
+                zooms: [3, 20]
+            });
+            map.enableScrollWheelZoom(true);
+        }
+        ensureMapControls();
 
         // 清除旧标记
-        markers.forEach(m => map.removeLayer(m));
+        markers.forEach(function(m) { map.remove(m); });
         markers = [];
+        mapPointLookup.clear();
 
-        const devices = await fetchJSON(`${API}/devices`);
-        const bounds = [];
-        let hasLocation = false;
-
-        for (const d of devices) {
-            const detail = await fetchJSON(`${API}/device/${d.deviceId}/latest`);
-            if (detail.latitude && detail.longitude) {
-                hasLocation = true;
-                const lat = detail.latitude;
-                const lng = detail.longitude;
-                bounds.push([lat, lng]);
-
-                const color = d.isOnline ? '#4CAF50' : '#f44336';
-                const icon = L.divIcon({
-                    html: `<div style="width:28px;height:28px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;color:white;">📱</div>`,
-                    className: '',
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14]
+        // 添加标记
+        for (var i = 0; i < points.length; i++) {
+            (function(p) {
+                var color = p.device.isOnline ? '#4CAF50' : '#f44336';
+                var marker = new AMap.Marker({
+                    position: new AMap.LngLat(p.longitude, p.latitude),
+                    map: map,
+                    title: p.device.elderName,
+                    content: '<div style="width:32px;height:32px;background:' + color + ';border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:16px;">📱</div>',
+                    offset: new AMap.Pixel(-16, -16)
                 });
 
-                const marker = L.marker([lat, lng], { icon }).addTo(map);
-                const batteryColor = batColor(detail.batteryPercent);
-                marker.bindPopup(`
-                    <div class="popup-name">${d.elderName}</div>
-                    <div class="popup-status">
-                        状态: <span class="${d.isOnline?'online':'offline'}">${d.isOnline?'在线':'离线'}</span><br>
-                        电量: <span style="color:${batteryColor}">${detail.batteryPercent}%</span> ${detail.isCharging?'⚡':''}<br>
-                        网络: ${detail.networkStatus}<br>
-                        WiFi: ${detail.wifiSsid || '未连接'}<br>
-                        铃声: ${detail.ringVolume}/${detail.ringVolumeMax}<br>
-                        最后上报: ${formatTime(d.lastOnline)}
-                    </div>
-                `, { maxWidth: 250 });
+                var infoContent = '<div style="padding:8px;font-family:sans-serif;min-width:150px;">' +
+                    '<b>' + escapeHTML(p.device.elderName || p.device.deviceId) + '</b><br>' +
+                    '位置: ' + escapeHTML(p.locationText || '正在解析位置...') + '<br>' +
+                    '电量: ' + p.detail.batteryPercent + '%<br>' +
+                    '网络: ' + p.detail.networkStatus + '<br>' +
+                    '最后上报: ' + formatTime(p.device.lastOnline) + '</div>';
+                p.infoContent = infoContent;
+                p.marker = marker;
+                mapPointLookup.set(p.device.deviceId, p);
+
+                marker.on('click', function() {
+                    activeMapDeviceId = p.device.deviceId;
+                    renderMapLocationList(currentMapPoints);
+                    openMapInfoWindow(p);
+                });
+
+                marker.on('dblclick', function() {
+                    focusMapDevice(p.device.deviceId);
+                });
 
                 markers.push(marker);
-            }
+            })(points[i]);
         }
 
-        if (hasLocation && bounds.length > 0) {
-            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-        }
+        currentMapPoints = points;
+        if (activeMapDeviceId && !mapPointLookup.has(activeMapDeviceId)) activeMapDeviceId = null;
+        renderMapLocationList(currentMapPoints);
+        fitMapToMarkers();
 
-        // 强制刷新地图尺寸
-        setTimeout(() => map.invalidateSize(), 100);
+        for (const point of currentMapPoints) {
+            if (point.locationText) continue;
+            reverseGeocode(point.latitude, point.longitude).then(function(locationText) {
+                if (version !== mapRenderVersion) return;
+                point.locationText = locationText;
+                point.infoContent = '<div style="padding:8px;font-family:sans-serif;min-width:150px;">' +
+                    '<b>' + escapeHTML(point.device.elderName || point.device.deviceId) + '</b><br>' +
+                    '位置: ' + escapeHTML(point.locationText || '位置解析失败') + '<br>' +
+                    '电量: ' + point.detail.batteryPercent + '%<br>' +
+                    '网络: ' + point.detail.networkStatus + '<br>' +
+                    '最后上报: ' + formatTime(point.device.lastOnline) + '</div>';
+                renderMapLocationList(currentMapPoints);
+                if (activeMapDeviceId === point.device.deviceId) openMapInfoWindow(point);
+            });
+        }
     }
 
     // ============ 列表页 ============
@@ -319,7 +548,7 @@
         for (const d of detailed) {
             const det = d.detail, alerts = d.alerts;
             const da = alerts.filter(a=>a.l==='d'), wa = alerts.filter(a=>a.l==='w');
-            const hasLoc = det.latitude && det.longitude;
+            const hasLoc = hasValidCoordinates(det);
 
             html += `<div class="device-card" onclick="showDetail('${d.deviceId}')">
                 ${da.length ? `<div class="alert-banner danger"><span class="alert-icon">🚨</span><span class="alert-text">${da.map(a=>a.t).join('、')}</span></div>` : ''}
@@ -440,7 +669,7 @@
         } else {
             document.getElementById('map-container').classList.add('active');
             currentView = 'list';
-            initMap();
+            triggerMapInitSequence();
         }
     }
 
@@ -451,7 +680,6 @@
     }
 
     renderList();
-    setInterval(() => { if (currentTab === 'list' && currentView === 'list') renderList(); }, 30000);
     </script>
 </body>
 </html>

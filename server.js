@@ -131,13 +131,6 @@ function isDeviceOnline(data) {
   return diffMinutes < 45;
 }
 
-// 清空所有数据
-app.post('/api/clear', (req, res) => {
-  db.exec('DELETE FROM heartbeats; DELETE FROM events;');
-  console.log('数据已清空');
-  res.json({ success: true });
-});
-
 // 健康检查
 app.get('/api/health', (req, res) => {
   const count = db.prepare('SELECT COUNT(DISTINCT device_id) as c FROM heartbeats').get();
