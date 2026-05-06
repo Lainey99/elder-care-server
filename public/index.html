@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安心守护 - 家属端</title>
+    <title>安心守护</title>
     <script>
         window._AMapSecurityConfig = { securityJsCode: '075c18b3e14a1b29ffb564700deed200' }
     </script>
@@ -12,14 +12,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
 
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .header h1 { font-size: 20px; font-weight: 600; }
-        .header .subtitle { font-size: 12px; opacity: 0.8; margin-top: 4px; }
-        .header-row { display: flex; justify-content: space-between; align-items: center; }
-        .back-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-        .back-btn:hover { background: rgba(255,255,255,0.3); }
-
-        .tab-bar { display: flex; background: white; border-bottom: 1px solid #eee; position: sticky; top: 72px; z-index: 99; }
+        .tab-bar { display: flex; background: white; border-bottom: 1px solid #eee; position: sticky; top: 0; z-index: 99; }
         .tab { flex: 1; padding: 14px; text-align: center; font-size: 14px; font-weight: 500; color: #666; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; }
         .tab.active { color: #667eea; border-bottom-color: #667eea; }
         .tab:hover { background: #f8f8f8; }
@@ -42,6 +35,17 @@
         .device-name { font-size: 18px; font-weight: 600; }
         .device-time { font-size: 12px; color: #999; }
         .device-body { padding: 16px 20px; }
+
+        .history-card { background: white; border-radius: 12px; margin-bottom: 8px; overflow: hidden; box-shadow: 0 1px 6px rgba(0,0,0,0.05); }
+        .history-row { display: flex; align-items: center; padding: 12px 16px; gap: 12px; border-bottom: 1px solid #f5f5f5; cursor: pointer; transition: background 0.15s; }
+        .history-row:last-child { border-bottom: none; }
+        .history-row:hover { background: #f8f8ff; }
+        .history-name { font-size: 14px; font-weight: 600; min-width: 60px; white-space: nowrap; }
+        .history-time { font-size: 12px; color: #999; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .history-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+        .history-badge.online { background: #E8F5E9; color: #2E7D32; }
+        .history-badge.offline { background: #FFEBEE; color: #C62828; }
+        .history-badge.charging { background: #FFF3E0; color: #E65100; }
 
         .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
         @media (min-width: 900px) { .status-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -99,7 +103,10 @@
         .empty-text { font-size: 16px; font-weight: 500; margin-bottom: 8px; color: #666; }
         .empty-hint { font-size: 13px; }
 
-        #refresh-btn { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; font-size: 22px; cursor: pointer; box-shadow: 0 4px 16px rgba(102,126,234,0.4); transition: transform 0.2s; z-index: 100; }
+        .detail-delete-btn { width: 100%; padding: 14px; background: #fff; color: #f44336; font-size: 15px; font-weight: 600; border: 1px solid #ffcdd2; border-radius: 12px; cursor: pointer; transition: all 0.2s; margin-top: 12px; -webkit-tap-highlight-color: transparent; }
+        .detail-delete-btn:hover { background: #ffebee; border-color: #f44336; }
+
+        #refresh-btn { position: fixed; bottom: 24px; right: 24px; width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; font-size: 20px; cursor: pointer; box-shadow: 0 4px 16px rgba(102,126,234,0.4); transition: transform 0.2s; z-index: 100; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
         #refresh-btn:hover { transform: scale(1.1); }
 
         .loading { text-align: center; padding: 40px; color: #999; }
@@ -109,10 +116,40 @@
         /* 地图页样式 */
         #list-container { display: none; }
         #list-container.active { display: block; }
+        #history-container { display: none; }
+        #history-container.active { display: block; }
         #map-container { display: none; }
         #map-container.active { display: block; }
         #detail-container { display: none; }
-        #detail-container.active { display: block; }
+        #detail-container.active {
+            display: flex; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 200;
+            align-items: stretch; justify-content: flex-end;
+        }
+        .detail-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            animation: fadeIn 0.2s ease;
+        }
+        .detail-drawer {
+            position: relative; width: 90%; max-width: 560px;
+            background: #f0f2f5; overflow-y: auto; padding: 16px;
+            box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+            animation: slideInRight 0.3s ease;
+        }
+        .detail-close {
+            position: sticky; top: 0; z-index: 10;
+            display: flex; justify-content: flex-end; padding: 8px 0;
+        }
+        .detail-close-btn {
+            width: 36px; height: 36px; border-radius: 50%;
+            background: white; border: none; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: #666; transition: background 0.2s;
+            -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+        }
+        .detail-close-btn:hover { background: #f5f5f5; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
         .map-layout { display: flex; flex-direction: column; gap: 12px; }
         .map-wrap { position: relative; height: clamp(280px, 45vh, 380px); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.06); min-width: 0; }
@@ -127,10 +164,57 @@
         .map-location-name { display: block; font-size: 13px; font-weight: 600; color: #333; }
         .map-location-text { display: block; margin-top: 3px; font-size: 12px; color: #555; line-height: 1.45; }
         .map-location-empty { background: white; border-radius: 12px; padding: 16px; color: #999; font-size: 13px; box-shadow: 0 1px 6px rgba(0,0,0,0.04); }
+        .map-list-toggle { display: none; position: fixed; z-index: 160; width: 48px; height: 48px; border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; border: none; box-shadow: 0 4px 16px rgba(102,126,234,0.4);
+            font-size: 20px; cursor: pointer; align-items: center; justify-content: center;
+            transition: transform 0.2s;
+            -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+        }
+        .map-list-toggle.visible { display: flex; }
+        .map-list-toggle:active { transform: scale(0.9); }
+
+        /* 移动端：地图占满剩余空间，设备列表浮动可收起 */
+        @media (max-width: 899px) {
+            #map-container.active { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; z-index: 50; padding: 0 !important; }
+            #map-container.active .container { padding: 0 !important; max-width: 100% !important; }
+            .map-layout {
+                display: block; position: relative;
+                width: 100%; height: 100vh; height: 100dvh;
+            }
+            .map-wrap {
+                width: 100%; height: 100%;
+                border-radius: 0; box-shadow: none;
+            }
+            .map-list-toggle.visible {
+                bottom: 80px; right: 24px;
+            }
+            #refresh-btn { bottom: 24px; }
+            .map-location-list {
+                position: fixed; bottom: 0; left: 0; right: 0; z-index: 210;
+                max-height: 50vh; overflow-y: auto;
+                background: white; border-radius: 16px 16px 0 0;
+                padding: 8px 16px 16px;
+                box-shadow: 0 -2px 16px rgba(0,0,0,0.12);
+                transform: translateY(0);
+                transition: transform 0.3s ease;
+            }
+            /* 收起时：只露出顶部拖拽条（约24px的圆角区域） */
+            .map-location-list.collapsed { transform: translateY(calc(100% - 24px)); }
+            .map-location-list::before {
+                content: ''; display: block; width: 36px; height: 4px;
+                background: #ccc; border-radius: 2px; margin: 8px auto 10px;
+                flex-shrink: 0;
+            }
+            .map-location-list:not(.collapsed)::before {
+                margin-bottom: 10px;
+            }
+        }
         @media (min-width: 900px) {
             .map-layout { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); align-items: stretch; }
             .map-wrap { height: calc(100vh - 170px); min-height: 500px; }
             .map-location-list { max-height: calc(100vh - 170px); overflow-y: auto; align-content: start; padding-right: 4px; }
+            .map-list-toggle { display: none !important; }
         }
 
         /* Leaflet 自定义弹窗 */
@@ -142,23 +226,20 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="header-row">
-            <div>
-                <h1 id="header-title">安心守护</h1>
-                <div class="subtitle" id="header-subtitle">家属端监控面板</div>
-            </div>
-            <button class="back-btn" id="back-btn" onclick="goBack()" style="display:none">← 返回</button>
-        </div>
-    </div>
-
     <div class="tab-bar" id="tab-bar">
         <div class="tab active" onclick="switchTab('list')">📋 设备列表</div>
+        <div class="tab" onclick="switchTab('history')">📜 上报记录</div>
         <div class="tab" onclick="switchTab('map')">🗺️ 设备地图</div>
     </div>
 
     <div id="list-container" class="active">
         <div class="container" id="app">
+            <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
+        </div>
+    </div>
+
+    <div id="history-container">
+        <div class="container" id="history-app">
             <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
         </div>
     </div>
@@ -176,8 +257,16 @@
         </div>
     </div>
 
+    <button class="map-list-toggle" id="map-list-toggle" onclick="toggleMapList()" title="设备列表">📋</button>
+
     <div id="detail-container">
-        <div class="container" id="detail-app"></div>
+        <div class="detail-overlay" onclick="goBack()"></div>
+        <div class="detail-drawer">
+            <div class="detail-close">
+                <button class="detail-close-btn" onclick="goBack()" title="关闭">✕</button>
+            </div>
+            <div id="detail-app"></div>
+        </div>
     </div>
 
     <button id="refresh-btn" onclick="refresh()" title="刷新">🔄</button>
@@ -382,28 +471,61 @@
     function switchTab(tab) {
         mapInitSequenceId++;
         currentTab = tab;
+        var tabMap = { list: 0, history: 1, map: 2 };
         document.querySelectorAll('.tab').forEach((el, i) => {
-            el.classList.toggle('active', (i === 0 && tab === 'list') || (i === 1 && tab === 'map'));
+            el.classList.toggle('active', tabMap[tab] === i);
         });
         document.getElementById('list-container').classList.toggle('active', tab === 'list');
+        document.getElementById('history-container').classList.toggle('active', tab === 'history');
         document.getElementById('map-container').classList.toggle('active', tab === 'map');
         document.getElementById('detail-container').classList.remove('active');
-        document.getElementById('back-btn').style.display = 'none';
+        var toggleBtn = document.getElementById('map-list-toggle');
+        if (toggleBtn) toggleBtn.classList.toggle('visible', tab === 'map');
         currentView = 'list';
         currentDeviceId = null;
 
         if (tab === 'list') {
-            document.getElementById('header-title').textContent = '安心守护';
-            document.getElementById('header-subtitle').textContent = '家属端监控面板';
             renderList();
+        } else if (tab === 'history') {
+            renderHistory();
         } else if (tab === 'map') {
-            document.getElementById('header-title').textContent = '安心守护';
-            document.getElementById('header-subtitle').textContent = '设备位置地图';
             triggerMapInitSequence();
         }
     }
 
     // ============ 地图页 ============
+    function toggleMapList() {
+        var list = document.getElementById('map-location-list');
+        var btn = document.getElementById('map-list-toggle');
+        list.classList.toggle('collapsed');
+        btn.textContent = list.classList.contains('collapsed') ? '📋' : '✕';
+        if (map) {
+            setTimeout(function() { map.resize(); }, 350);
+        }
+    }
+
+    // WGS-84 → GCJ-02 坐标转换（高德地图专用，JSAPI 2.0）
+    function convertToGCJ02(points) {
+        return new Promise(function(resolve, reject) {
+            if (!points.length) return resolve(points);
+            var coords = [];
+            for (var i = 0; i < points.length; i++) {
+                coords.push([points[i].longitude, points[i].latitude]);
+            }
+            AMap.convertFrom(coords, 'gps', function(status, result) {
+                if (status === 'complete' && result && result.locations) {
+                    for (var i = 0; i < result.locations.length; i++) {
+                        var loc = result.locations[i];
+                        // 高德 2.0 返回 LngLat 对象，兼容 .lng/.lat 和 getLng()/getLat()
+                        points[i].longitude = loc.lng !== undefined ? loc.lng : loc.getLng();
+                        points[i].latitude = loc.lat !== undefined ? loc.lat : loc.getLat();
+                    }
+                }
+                resolve(points);
+            });
+        });
+    }
+
     async function initMap() {
         const isReady = await waitForMapContainerReady();
         if (!isReady) return;
@@ -416,18 +538,25 @@
         }));
         if (version !== mapRenderVersion) return;
 
-        const points = detailedDevices.filter(function(item) {
+        let points = detailedDevices.filter(function(item) {
             return hasValidCoordinates(item.detail);
         }).map(function(item) {
-            const latitude = Number(item.detail.latitude);
-            const longitude = Number(item.detail.longitude);
             return {
                 device: item.device,
                 detail: item.detail,
-                latitude,
-                longitude,
-                locationText: locationTextCache.get(getCoordinateKey(latitude, longitude)) || ''
+                latitude: Number(item.detail.latitude),
+                longitude: Number(item.detail.longitude),
+                locationText: ''
             };
+        });
+
+        // WGS-84 → GCJ-02 转换
+        points = await convertToGCJ02(points);
+
+        // 填充缓存
+        points.forEach(function(p) {
+            var key = getCoordinateKey(p.latitude, p.longitude);
+            p.locationText = locationTextCache.get(key) || '';
         });
 
         if (points.length === 0) {
@@ -440,7 +569,6 @@
             renderMapLocationList([]);
             if (!map) {
                 map = new AMap.Map('map', { zoom: 5, center: [116.4074, 39.9042], resizeEnable: true });
-                map.enableScrollWheelZoom(true);
                 ensureMapControls();
             } else {
                 map.setZoomAndCenter(5, [116.4074, 39.9042]);
@@ -458,7 +586,6 @@
                 resizeEnable: true,
                 zooms: [3, 20]
             });
-            map.enableScrollWheelZoom(true);
         }
         ensureMapControls();
 
@@ -525,6 +652,27 @@
         }
     }
 
+    // ============ 上报记录 ============
+    async function renderHistory() {
+        const app = document.getElementById('history-app');
+        const heartbeats = await fetchJSON(`${API}/heartbeats?limit=100`);
+        if (!heartbeats.length) { app.innerHTML = '<div class="empty"><div class="empty-icon">📜</div><div class="empty-text">暂无上报记录</div></div>'; return; }
+
+        let html = '<div class="history-card">';
+        for (const h of heartbeats) {
+            const batClass = h.batteryPercent > 50 ? 'high' : h.batteryPercent > 20 ? 'medium' : 'low';
+            html += `<div class="history-row">
+                <span class="history-name">${escapeHTML(h.elderName)}</span>
+                <span class="history-time">${fmt(h.clientReportTime || h.serverTime)}</span>
+                <span style="font-size:13px;color:${batColor(h.batteryPercent)}">🔋${h.batteryPercent}%</span>
+                <span style="font-size:12px;color:#666">${h.networkStatus === 'WIFI' ? '📶' : h.networkStatus === 'MOBILE' ? '📱' : '❌'}</span>
+                <span class="history-badge ${h.isOnline ? 'online' : 'offline'}">${h.isOnline ? '在线' : '离线'}</span>
+            </div>`;
+        }
+        html += '</div>';
+        app.innerHTML = html;
+    }
+
     // ============ 列表页 ============
     async function renderList() {
         const app = document.getElementById('app');
@@ -575,14 +723,12 @@
         document.getElementById('list-container').classList.remove('active');
         document.getElementById('map-container').classList.remove('active');
         document.getElementById('detail-container').classList.add('active');
-        document.getElementById('back-btn').style.display = 'block';
 
         const data = await fetchJSON(`${API}/device/${deviceId}/latest`);
+        const remarkData = await fetchJSON(`${API}/device/${deviceId}/remark`);
+        data.remark = remarkData.remark;
         const events = await fetchJSON(`${API}/device/${deviceId}/events?limit=50`);
         const alerts = getAlerts(data);
-
-        document.getElementById('header-title').textContent = data.elderName || '未知设备';
-        document.getElementById('header-subtitle').textContent = `${data.brand} ${data.model} · ${data.isOnline?'在线':'离线'}`;
 
         let html = '';
         if (alerts.length) {
@@ -594,6 +740,10 @@
         html += '<div class="detail-columns">';
 
         html += `<div class="detail-section"><div class="section-title">📱 设备信息</div><div class="section-body">
+            <div class="detail-row" onclick="editRemark('${data.deviceId}')" style="cursor:pointer">
+                <span class="detail-label">备注</span>
+                <span class="detail-value" id="detail-remark">${escapeHTML(data.remark || '点击添加备注')}</span>
+            </div>
             <div class="detail-row"><span class="detail-label">设备ID</span><span class="detail-value" style="font-size:12px;color:#999">${data.deviceId}</span></div>
             <div class="detail-row"><span class="detail-label">品牌 / 型号</span><span class="detail-value">${data.brand} ${data.model}</span></div>
             <div class="detail-row"><span class="detail-label">安卓版本</span><span class="detail-value">Android ${data.androidVersion}</span></div>
@@ -652,20 +802,23 @@
         }
         html += '</div>';
 
+        html += `<button class="detail-delete-btn" onclick="deleteDevice('${data.deviceId}','${escapeHTML(data.elderName || data.deviceId)}')">🗑️ 删除设备及所有记录</button>`;
+
         document.getElementById('detail-app').innerHTML = html;
         window.scrollTo(0, 0);
     }
 
     function goBack() {
         document.getElementById('detail-container').classList.remove('active');
-        document.getElementById('back-btn').style.display = 'none';
-        document.getElementById('header-title').textContent = '安心守护';
-        document.getElementById('header-subtitle').textContent = currentTab === 'map' ? '设备位置地图' : '家属端监控面板';
 
         if (currentTab === 'list') {
             document.getElementById('list-container').classList.add('active');
             currentView = 'list';
             renderList();
+        } else if (currentTab === 'history') {
+            document.getElementById('history-container').classList.add('active');
+            currentView = 'list';
+            renderHistory();
         } else {
             document.getElementById('map-container').classList.add('active');
             currentView = 'list';
@@ -673,8 +826,46 @@
         }
     }
 
+    async function editRemark(deviceId) {
+        const current = document.getElementById('detail-remark').textContent;
+        const remark = prompt('设备备注', current === '点击添加备注' ? '' : current);
+        if (remark === null) return;
+        try {
+            const res = await fetch(`${API}/device/${deviceId}/remark`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ remark })
+            });
+            const result = await res.json();
+            if (result.success) {
+                document.getElementById('detail-remark').textContent = remark || '点击添加备注';
+            }
+        } catch (e) {
+            alert('保存备注失败');
+        }
+    }
+
+    async function deleteDevice(deviceId, name) {
+        if (!confirm(`确认删除设备「${name}」及其所有上报记录？\n\n此操作不可撤销。`)) return;
+        try {
+            const res = await fetch(`${API}/device/${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
+            const result = await res.json();
+            if (result.success) {
+                if (currentView === 'detail') goBack();
+                else if (currentTab === 'list') await renderList();
+                else if (currentTab === 'history') await renderHistory();
+                else if (currentTab === 'map') await initMap();
+            } else {
+                alert('删除失败：' + (result.error || '未知错误'));
+            }
+        } catch (e) {
+            alert('删除失败，请重试');
+        }
+    }
+
     async function refresh() {
         if (currentTab === 'list' && currentView === 'list') await renderList();
+        else if (currentTab === 'history' && currentView === 'list') await renderHistory();
         else if (currentTab === 'map' && currentView === 'list') await initMap();
         else if (currentView === 'detail' && currentDeviceId) await showDetail(currentDeviceId);
     }

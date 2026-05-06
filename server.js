@@ -34,6 +34,11 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_events_device ON events(device_id);
+
+  CREATE TABLE IF NOT EXISTS device_remarks (
+    device_id TEXT PRIMARY KEY,
+    remark TEXT NOT NULL DEFAULT ''
+  );
 `);
 
 console.log('SQLite 数据库已连接:', DB_PATH);
@@ -108,11 +113,16 @@ app.get('/api/devices', (req, res) => {
     ORDER BY id DESC
   `).all();
 
+  const remarks = {};
+  for (const r of db.prepare('SELECT device_id, remark FROM device_remarks').all()) {
+    remarks[r.device_id] = r.remark;
+  }
+
   const deviceList = devices.map(d => {
     const data = JSON.parse(d.payload);
     return {
       deviceId: d.device_id,
-      elderName: data.elderName || '未知',
+      elderName: remarks[d.device_id] || d.device_id,
       lastOnline: data.clientReportTime,
       batteryPercent: data.batteryPercent,
       networkStatus: data.networkStatus,
@@ -135,6 +145,77 @@ function isDeviceOnline(data) {
 app.get('/api/health', (req, res) => {
   const count = db.prepare('SELECT COUNT(DISTINCT device_id) as c FROM heartbeats').get();
   res.json({ status: 'ok', deviceCount: count.c, uptime: process.uptime() });
+});
+
+// 查询设备备注
+app.get('/api/device/:deviceId/remark', (req, res) => {
+  const row = db.prepare('SELECT remark FROM device_remarks WHERE device_id = ?').get(req.params.deviceId);
+  res.json({ deviceId: req.params.deviceId, remark: row ? row.remark : '' });
+});
+
+// 更新设备备注
+app.put('/api/device/:deviceId/remark', (req, res) => {
+  const { remark } = req.body;
+  if (remark === undefined) return res.status(400).json({ error: '缺少 remark' });
+  db.prepare('INSERT INTO device_remarks (device_id, remark) VALUES (?, ?) ON CONFLICT(device_id) DO UPDATE SET remark = ?')
+    .run(req.params.deviceId, remark, remark);
+  res.json({ success: true, deviceId: req.params.deviceId, remark });
+});
+
+// 删除设备（删除该设备在所有表中的数据）
+app.delete('/api/device/:deviceId', (req, res) => {
+  const deviceId = req.params.deviceId;
+  if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM heartbeats WHERE device_id = ?').run(deviceId);
+    db.prepare('DELETE FROM events WHERE device_id = ?').run(deviceId);
+    db.prepare('DELETE FROM device_remarks WHERE device_id = ?').run(deviceId);
+  });
+  tx();
+
+  console.log(`已删除设备: ${deviceId}`);
+  res.json({ success: true, deviceId });
+});
+
+// 查询所有设备备注
+app.get('/api/devices/remarks', (req, res) => {
+  const rows = db.prepare('SELECT device_id, remark FROM device_remarks').all();
+  const remarks = {};
+  for (const r of rows) remarks[r.device_id] = r.remark;
+  res.json(remarks);
+});
+
+// 查询最近心跳记录
+app.get('/api/heartbeats', (req, res) => {
+  const limit = parseInt(req.query.limit) || 100;
+  const rows = db.prepare(
+    'SELECT id, device_id, payload FROM heartbeats ORDER BY id DESC LIMIT ?'
+  ).all(limit);
+
+  const remarks = {};
+  for (const r of db.prepare('SELECT device_id, remark FROM device_remarks').all()) {
+    remarks[r.device_id] = r.remark;
+  }
+
+  const result = rows.map(row => {
+    const data = JSON.parse(row.payload);
+    return {
+      id: row.id,
+      deviceId: row.device_id,
+      elderName: remarks[row.device_id] || row.device_id,
+      batteryPercent: data.batteryPercent,
+      isCharging: data.isCharging,
+      networkStatus: data.networkStatus,
+      mobileDataEnabled: data.mobileDataEnabled,
+      ringerMode: data.ringerMode,
+      isOnline: isDeviceOnline(data),
+      clientReportTime: data.clientReportTime,
+      serverTime: data.serverReceiveTime
+    };
+  });
+
+  res.json(result);
 });
 
 app.listen(PORT, () => {
