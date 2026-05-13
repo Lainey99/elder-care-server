@@ -8,6 +8,7 @@
         window._AMapSecurityConfig = { securityJsCode: '075c18b3e14a1b29ffb564700deed200' }
     </script>
     <script src="https://webapi.amap.com/maps?v=2.0&key=6ab1df99588a9c4bf3c06319d53d5369&plugin=AMap.Scale,AMap.ToolBar,AMap.Geocoder"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; }
@@ -46,6 +47,46 @@
         .history-badge.online { background: #E8F5E9; color: #2E7D32; }
         .history-badge.offline { background: #FFEBEE; color: #C62828; }
         .history-badge.charging { background: #FFF3E0; color: #E65100; }
+        .history-shell { display: grid; gap: 12px; }
+        .history-toolbar { background: white; border-radius: 14px; padding: 14px 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); display: grid; gap: 12px; }
+        .history-toolbar-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .history-toolbar-label { font-size: 12px; color: #888; min-width: 52px; }
+        .history-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+        .history-range-btn { border: 1px solid #d9def7; background: #f7f8ff; color: #5b68c7; border-radius: 999px; padding: 7px 12px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .history-range-btn.active, .history-range-btn:hover { background: #667eea; color: white; border-color: #667eea; }
+        .history-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+        .history-field { display: grid; gap: 4px; min-width: 160px; }
+        .history-field label { font-size: 12px; color: #888; }
+        .history-input, .history-select { width: 100%; border: 1px solid #dfe3eb; border-radius: 10px; padding: 10px 12px; font-size: 13px; background: white; color: #333; }
+        .history-input:focus, .history-select:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,0.12); }
+        .history-action-btn { border: none; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-radius: 10px; padding: 10px 16px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 12px rgba(102,126,234,0.18); }
+        .history-action-btn.secondary { background: #f3f4f8; color: #556; box-shadow: none; border: 1px solid #e0e4ec; }
+        .history-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+        .history-summary-chip { background: #f5f7ff; color: #4c5fc1; border-radius: 999px; padding: 6px 10px; font-size: 12px; }
+        .history-chart-card { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; }
+        .history-chart-head { padding: 14px 16px 0; }
+        .history-chart-title { font-size: 15px; font-weight: 600; color: #444; }
+        .history-chart-note { font-size: 12px; color: #999; margin-top: 4px; }
+        #history-chart { width: 100%; height: 480px; }
+        .history-empty-panel { padding: 56px 20px; text-align: center; color: #999; }
+        .history-empty-panel .empty-icon { font-size: 40px; margin-bottom: 10px; }
+        .history-empty-panel .empty-text { font-size: 15px; color: #666; margin-bottom: 6px; }
+        .history-empty-panel .empty-hint { font-size: 12px; }
+        .history-detail-meta { font-size: 12px; color: #999; margin-top: 6px; }
+        @media (max-width: 899px) {
+            .history-toolbar { padding: 12px; gap: 10px; }
+            .history-toolbar-row { align-items: flex-start; }
+            .history-toolbar-label { width: 100%; min-width: 0; }
+            .history-controls { display: grid; grid-template-columns: 1fr; gap: 10px; }
+            .history-field { min-width: 0; }
+            .history-action-btn { width: 100%; min-height: 42px; }
+            .history-summary { gap: 6px; }
+            .history-summary-chip { font-size: 11px; padding: 5px 8px; }
+            .history-chart-head { padding: 12px 12px 0; }
+            .history-chart-title { font-size: 14px; }
+            .history-chart-note { font-size: 11px; line-height: 1.5; }
+            #history-chart { height: 520px; }
+        }
 
         .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
         @media (min-width: 900px) { .status-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -260,7 +301,7 @@
     <button class="map-list-toggle" id="map-list-toggle" onclick="toggleMapList()" title="设备列表">📋</button>
 
     <div id="detail-container">
-        <div class="detail-overlay" onclick="goBack()"></div>
+        <div class="detail-overlay" onclick="handleDetailOverlayClick()"></div>
         <div class="detail-drawer">
             <div class="detail-close">
                 <button class="detail-close-btn" onclick="goBack()" title="关闭">✕</button>
@@ -285,8 +326,20 @@
     let mapRenderVersion = 0;
     let mapInitSequenceId = 0;
     let mapControlsReady = false;
+        let currentHeartbeatDetail = null;
+        let historyRenderVersion = 0;
+        let detailOpenedAt = 0;
     const mapPointLookup = new Map();
     const locationTextCache = new Map();
+        const historyState = {
+            start: null,
+            end: null,
+            deviceId: '',
+            preset: '24h',
+            chart: null,
+            records: [],
+            devices: []
+        };
 
     async function fetchJSON(url) { const res = await fetch(url); return res.json(); }
 
@@ -304,7 +357,9 @@
     function batClass(p) { return p > 50 ? 'high' : p > 20 ? 'medium' : 'low'; }
 
     function volumeBar(cur, max) {
-        const n = 5, a = Math.round((cur / max) * n);
+        const safeMax = max > 0 ? max : 1;
+        const safeCur = Number.isFinite(cur) ? cur : 0;
+        const n = 5, a = Math.round((safeCur / safeMax) * n);
         let h = '<div class="volume-bar">';
         for (let i = 0; i < n; i++) h += `<div class="volume-seg ${i < a ? 'active' : ''}" style="height:${6+i*3}px"></div>`;
         return h + '</div>';
@@ -338,6 +393,69 @@
         return String(value ?? '').replace(/[&<>"']/g, function(ch) {
             return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
         });
+    }
+    function maybeValue(value, fallback) {
+        return value === undefined || value === null || value === '' ? (fallback || '未知') : value;
+    }
+    function formatDateTimeLocalInput(date) {
+        if (!date) return '';
+        const pad = function(n) { return String(n).padStart(2, '0'); };
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+    function parseDateTimeLocalInput(value) {
+        if (!value) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    function formatGap(ms) {
+        if (!Number.isFinite(ms) || ms <= 0) return '首条上报';
+        const totalMinutes = Math.round(ms / 60000);
+        if (totalMinutes < 60) return `${totalMinutes} 分钟`;
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        return minutes ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`;
+    }
+    function historyDisplayName(record) {
+        return record && (record.elderName || record.deviceId) ? (record.elderName || record.deviceId) : '未知设备';
+    }
+    function historyNetworkIcon(status) {
+        return status === 'WIFI' ? '🛜' : status === 'MOBILE' ? '📶' : '❌';
+    }
+    function isCompactViewport() {
+        return window.innerWidth < 900;
+    }
+    function truncateText(value, maxLength) {
+        const text = String(value || '');
+        return text.length > maxLength ? text.slice(0, maxLength - 1) + '…' : text;
+    }
+    function getHistoryChartHeight(deviceCount) {
+        const count = Math.max(1, deviceCount || 1);
+        if (isCompactViewport()) return Math.max(520, Math.min(820, 180 + count * 54));
+        return Math.max(440, Math.min(900, 180 + count * 42));
+    }
+    function getHistoryPresetDefault() {
+        return isCompactViewport() ? '6h' : '24h';
+    }
+    function getHistoryPresetRange(preset) {
+        const now = new Date();
+        const start = new Date(now.getTime());
+        const hoursMap = { '1h': 1, '6h': 6, '24h': 24, '3d': 72, '7d': 168 };
+        const hours = hoursMap[preset] || 24;
+        start.setHours(start.getHours() - hours);
+        return { start, end: now };
+    }
+    function ensureHistoryDefaults() {
+        if (historyState.start && historyState.end) return;
+        const defaultPreset = getHistoryPresetDefault();
+        const range = getHistoryPresetRange(defaultPreset);
+        historyState.start = range.start;
+        historyState.end = range.end;
+        historyState.preset = defaultPreset;
+    }
+    function disposeHistoryChart() {
+        if (!historyState.chart) return;
+        historyState.chart.dispose();
+        historyState.chart = null;
     }
     function getCoordinateKey(lat, lng) { return `${lat.toFixed(5)},${lng.toFixed(5)}`; }
     function isOverseasCoordinate(lat, lng) {
@@ -483,6 +601,7 @@
         if (toggleBtn) toggleBtn.classList.toggle('visible', tab === 'map');
         currentView = 'list';
         currentDeviceId = null;
+        currentHeartbeatDetail = null;
 
         if (tab === 'list') {
             renderList();
@@ -653,24 +772,311 @@
     }
 
     // ============ 上报记录 ============
+    function getHistoryQueryString() {
+        const params = new URLSearchParams();
+        if (historyState.start) params.set('start', historyState.start.toISOString());
+        if (historyState.end) params.set('end', historyState.end.toISOString());
+        if (historyState.deviceId) params.set('deviceId', historyState.deviceId);
+        params.set('order', 'asc');
+        params.set('limit', historyState.deviceId ? '5000' : '3000');
+        return params.toString();
+    }
+    function buildHistoryDeviceOptions() {
+        const map = new Map();
+        for (const device of historyState.devices) {
+            map.set(device.deviceId, device.elderName || device.deviceId);
+        }
+        for (const record of historyState.records) {
+            if (!map.has(record.deviceId)) map.set(record.deviceId, historyDisplayName(record));
+        }
+        return Array.from(map.entries()).sort(function(a, b) {
+            return a[1].localeCompare(b[1], 'zh-CN');
+        });
+    }
+    function renderHistoryShell() {
+        const app = document.getElementById('history-app');
+        const options = buildHistoryDeviceOptions();
+        const presetList = [
+            { id: '1h', label: '1小时' },
+            { id: '6h', label: '6小时' },
+            { id: '24h', label: '24小时' },
+            { id: '3d', label: '3天' },
+            { id: '7d', label: '7天' }
+        ];
+        const startValue = formatDateTimeLocalInput(historyState.start);
+        const endValue = formatDateTimeLocalInput(historyState.end);
+        const deviceOptions = options.map(function(entry) {
+            const selected = historyState.deviceId === entry[0] ? ' selected' : '';
+            return `<option value="${escapeHTML(entry[0])}"${selected}>${escapeHTML(entry[1])}</option>`;
+        }).join('');
+        app.innerHTML = `<div class="history-shell">
+            <div class="history-toolbar">
+                <div class="history-toolbar-row">
+                    <span class="history-toolbar-label">快捷范围</span>
+                    <div class="history-presets">
+                        ${presetList.map(function(item) {
+                            return `<button type="button" class="history-range-btn${historyState.preset === item.id ? ' active' : ''}" onclick="setHistoryPreset('${item.id}')">${item.label}</button>`;
+                        }).join('')}
+                    </div>
+                </div>
+                <div class="history-controls">
+                    <div class="history-field">
+                        <label for="history-start">开始时间</label>
+                        <input id="history-start" class="history-input" type="datetime-local" value="${startValue}" onchange="onHistoryCustomRangeChange()">
+                    </div>
+                    <div class="history-field">
+                        <label for="history-end">结束时间</label>
+                        <input id="history-end" class="history-input" type="datetime-local" value="${endValue}" onchange="onHistoryCustomRangeChange()">
+                    </div>
+                    <div class="history-field">
+                        <label for="history-device">设备筛选</label>
+                        <select id="history-device" class="history-select" onchange="onHistoryDeviceChange()">
+                            <option value="">全部设备</option>
+                            ${deviceOptions}
+                        </select>
+                    </div>
+                    <div class="history-field" style="min-width:120px;align-self:end">
+                        <button type="button" class="history-action-btn" onclick="refreshHistoryData()">刷新图表</button>
+                    </div>
+                </div>
+                <div class="history-summary" id="history-summary"></div>
+            </div>
+            <div class="history-chart-card">
+                <div class="history-chart-head">
+                    <div class="history-chart-title">心跳上报时序图</div>
+                    <div class="history-chart-note">横轴使用服务端接收时间，点与点之间的间隔可直观看出上报是否连续。</div>
+                </div>
+                <div id="history-chart"></div>
+            </div>
+        </div>`;
+    }
+    function buildHistoryPointMap(records) {
+        const grouped = new Map();
+        for (const record of records) {
+            if (!grouped.has(record.deviceId)) grouped.set(record.deviceId, []);
+            grouped.get(record.deviceId).push(record);
+        }
+
+        const categoryMeta = [];
+        const points = [];
+
+        const deviceEntries = Array.from(grouped.entries()).sort(function(a, b) {
+            return historyDisplayName(a[1][0]).localeCompare(historyDisplayName(b[1][0]), 'zh-CN');
+        });
+
+        for (const entry of deviceEntries) {
+            const deviceId = entry[0];
+            const items = entry[1].slice().sort(function(a, b) {
+                return new Date(a.serverReceiveTime || a.serverTime).getTime() - new Date(b.serverReceiveTime || b.serverTime).getTime();
+            });
+            const displayName = historyDisplayName(items[0]);
+            const axisKey = `${displayName}__${deviceId}`;
+            categoryMeta.push({ key: axisKey, name: displayName, deviceId });
+
+            let previousRecord = null;
+            for (const item of items) {
+                const serverReceiveTime = item.serverReceiveTime || item.serverTime;
+                if (!serverReceiveTime) continue;
+                const previousTime = previousRecord ? new Date(previousRecord.serverReceiveTime || previousRecord.serverTime).getTime() : null;
+                const currentTime = new Date(serverReceiveTime).getTime();
+                points.push({
+                    value: [currentTime, axisKey],
+                    heartbeat: item,
+                    previousHeartbeat: previousRecord,
+                    gapMs: previousTime ? currentTime - previousTime : null
+                });
+                previousRecord = item;
+            }
+        }
+
+        return { categoryMeta, points };
+    }
+    function updateHistorySummary(records, categoryMeta) {
+        const summary = document.getElementById('history-summary');
+        if (!summary) return;
+        const rangeText = historyState.start && historyState.end ? `${fmt(historyState.start.toISOString())} - ${fmt(historyState.end.toISOString())}` : '未设置时间范围';
+        summary.innerHTML = `
+            <span class="history-summary-chip">设备数 ${categoryMeta.length}</span>
+            <span class="history-summary-chip">心跳数 ${records.length}</span>
+            <span class="history-summary-chip">${historyState.deviceId ? '单设备视图' : '全部设备视图'}</span>
+            <span class="history-summary-chip">${escapeHTML(rangeText)}</span>
+        `;
+    }
+    function buildHistoryChartOption(records) {
+        const built = buildHistoryPointMap(records);
+        const categoryMeta = built.categoryMeta;
+        const points = built.points;
+        const compact = isCompactViewport();
+        const labelMap = {};
+        for (const item of categoryMeta) labelMap[item.key] = item.name;
+
+        return {
+            categoryMeta,
+            option: {
+                animation: false,
+                grid: { top: compact ? 28 : 36, right: compact ? 16 : 28, bottom: compact ? 66 : 72, left: compact ? (historyState.deviceId ? 72 : 88) : (historyState.deviceId ? 90 : 120) },
+                tooltip: {
+                    trigger: 'item',
+                    show: !compact,
+                    triggerOn: compact ? 'none' : 'mousemove|click',
+                    enterable: !compact,
+                    confine: true,
+                    backgroundColor: 'rgba(34, 39, 52, 0.92)',
+                    borderWidth: 0,
+                    textStyle: { fontSize: compact ? 11 : 12, color: '#fff' },
+                    extraCssText: compact ? 'max-width:220px;white-space:normal;' : 'max-width:260px;white-space:normal;',
+                    position: compact ? function(pos, params, dom, rect, size) {
+                        const x = Math.min(size.viewSize[0] - size.contentSize[0] - 8, Math.max(8, pos[0] - size.contentSize[0] / 2));
+                        const y = pos[1] > size.contentSize[1] + 18 ? pos[1] - size.contentSize[1] - 12 : pos[1] + 12;
+                        return [x, y];
+                    } : null,
+                    formatter: function(params) {
+                        const heartbeat = params.data.heartbeat;
+                        const gapText = params.data.gapMs ? formatGap(params.data.gapMs) : '首条上报';
+                        return `
+                            <div style="min-width:${compact ? 180 : 200}px">
+                                <div style="font-size:14px;font-weight:600;margin-bottom:6px">${escapeHTML(historyDisplayName(heartbeat))}</div>
+                                <div style="font-size:12px;line-height:1.8">
+                                    <div>服务端时间: ${escapeHTML(fmt(heartbeat.serverReceiveTime || heartbeat.serverTime))}</div>
+                                    <div>客户端时间: ${escapeHTML(fmt(heartbeat.clientReportTime))}</div>
+                                    <div>距上一条: ${escapeHTML(gapText)}</div>
+                                    <div>电量: ${escapeHTML(String(maybeValue(heartbeat.batteryPercent, '未知')))}%</div>
+                                    <div>网络: ${historyNetworkIcon(heartbeat.networkStatus)} ${escapeHTML(String(maybeValue(heartbeat.networkStatus, '未知')))}</div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                },
+                xAxis: {
+                    type: 'time',
+                    axisLabel: { color: '#666', fontSize: compact ? 10 : 12, hideOverlap: true },
+                    axisLine: { lineStyle: { color: '#ddd' } },
+                    splitLine: { lineStyle: { color: '#f1f2f6' } }
+                },
+                yAxis: {
+                    type: 'category',
+                    data: categoryMeta.map(function(item) { return item.key; }),
+                    axisLabel: {
+                        color: '#555',
+                        fontSize: compact ? 10 : 12,
+                        formatter: function(value) {
+                            return truncateText(labelMap[value] || value, compact ? 7 : 12);
+                        }
+                    },
+                    axisLine: { lineStyle: { color: '#ddd' } },
+                    axisTick: { show: false }
+                },
+                dataZoom: [
+                    { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
+                    { type: 'slider', xAxisIndex: 0, height: compact ? 18 : 24, bottom: compact ? 18 : 20, filterMode: 'none', handleSize: compact ? '90%' : '100%' }
+                ],
+                series: [{
+                    type: 'scatter',
+                    data: points,
+                    symbolSize: compact ? (historyState.deviceId ? 18 : 14) : (historyState.deviceId ? 14 : 10),
+                    itemStyle: {
+                        color: function(params) {
+                            const heartbeat = params.data.heartbeat;
+                            if (heartbeat.networkStatus === 'NONE') return '#f44336';
+                            if (heartbeat.batteryPercent <= 20) return '#FF9800';
+                            return '#667eea';
+                        }
+                    },
+                    emphasis: {
+                        itemStyle: { borderColor: '#fff', borderWidth: 2, shadowBlur: 12, shadowColor: 'rgba(102,126,234,0.35)' }
+                    }
+                }]
+            }
+        };
+    }
+    function renderHistoryEmptyState() {
+        const chartEl = document.getElementById('history-chart');
+        if (!chartEl) return;
+        chartEl.innerHTML = `<div class="history-empty-panel">
+            <div class="empty-icon">📭</div>
+            <div class="empty-text">当前筛选范围内暂无心跳数据</div>
+            <div class="empty-hint">可以切换时间范围或选择其他设备继续查看。</div>
+        </div>`;
+    }
+    function renderHistoryChart(records) {
+        disposeHistoryChart();
+        const pointMap = buildHistoryPointMap(records);
+        updateHistorySummary(records, pointMap.categoryMeta);
+        if (!records.length) {
+            renderHistoryEmptyState();
+            return;
+        }
+        if (!window.echarts) {
+            renderHistoryEmptyState();
+            const chartEl = document.getElementById('history-chart');
+            if (chartEl) chartEl.innerHTML = '<div class="history-empty-panel"><div class="empty-icon">⚠️</div><div class="empty-text">图表库加载失败</div><div class="empty-hint">请稍后刷新页面重试。</div></div>';
+            return;
+        }
+        const chartEl = document.getElementById('history-chart');
+        chartEl.style.height = getHistoryChartHeight(pointMap.categoryMeta.length) + 'px';
+        const built = buildHistoryChartOption(records);
+        updateHistorySummary(records, built.categoryMeta);
+        historyState.chart = echarts.init(chartEl);
+        historyState.chart.setOption(built.option);
+        historyState.chart.on('click', function(params) {
+            if (!params.data || !params.data.heartbeat) return;
+            showHeartbeatDetail(params.data.heartbeat, params.data.previousHeartbeat);
+        });
+    }
+    async function refreshHistoryData() {
+        await renderHistory();
+    }
+    function setHistoryPreset(preset) {
+        const range = getHistoryPresetRange(preset);
+        historyState.start = range.start;
+        historyState.end = range.end;
+        historyState.preset = preset;
+        renderHistory();
+    }
+    function onHistoryCustomRangeChange() {
+        const startInput = document.getElementById('history-start');
+        const endInput = document.getElementById('history-end');
+        const start = parseDateTimeLocalInput(startInput && startInput.value);
+        const end = parseDateTimeLocalInput(endInput && endInput.value);
+        if (!start || !end || start > end) {
+            alert('请选择有效的开始和结束时间');
+            renderHistory();
+            return;
+        }
+        historyState.start = start;
+        historyState.end = end;
+        historyState.preset = 'custom';
+        renderHistory();
+    }
+    function onHistoryDeviceChange() {
+        const select = document.getElementById('history-device');
+        historyState.deviceId = select ? select.value : '';
+        renderHistory();
+    }
     async function renderHistory() {
         const app = document.getElementById('history-app');
-        const heartbeats = await fetchJSON(`${API}/heartbeats?limit=100`);
-        if (!heartbeats.length) { app.innerHTML = '<div class="empty"><div class="empty-icon">📜</div><div class="empty-text">暂无上报记录</div></div>'; return; }
+        ensureHistoryDefaults();
+        disposeHistoryChart();
+        app.innerHTML = '<div class="loading"><div class="spinner"></div><div style="margin-top:12px">正在加载心跳时序图...</div></div>';
 
-        let html = '<div class="history-card">';
-        for (const h of heartbeats) {
-            const batClass = h.batteryPercent > 50 ? 'high' : h.batteryPercent > 20 ? 'medium' : 'low';
-            html += `<div class="history-row">
-                <span class="history-name">${escapeHTML(h.elderName)}</span>
-                <span class="history-time">${fmt(h.clientReportTime || h.serverTime)}</span>
-                <span style="font-size:13px;color:${batColor(h.batteryPercent)}">🔋${h.batteryPercent}%</span>
-                <span style="font-size:12px;color:#666">${h.networkStatus === 'WIFI' ? '🛜' : h.networkStatus === 'MOBILE' ? '📶' : '❌'}</span>
-                <span class="history-badge ${h.isOnline ? 'online' : 'offline'}">${h.isOnline ? '在线' : '离线'}</span>
-            </div>`;
+        const renderVersion = ++historyRenderVersion;
+        const query = getHistoryQueryString();
+
+        try {
+            const responses = await Promise.all([
+                fetchJSON(`${API}/devices`),
+                fetchJSON(`${API}/heartbeats?${query}`)
+            ]);
+            if (renderVersion !== historyRenderVersion) return;
+
+            historyState.devices = responses[0] || [];
+            historyState.records = responses[1] || [];
+            renderHistoryShell();
+            renderHistoryChart(historyState.records);
+        } catch (e) {
+            if (renderVersion !== historyRenderVersion) return;
+            app.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">加载上报记录失败</div><div class="empty-hint">请稍后刷新重试</div></div>';
         }
-        html += '</div>';
-        app.innerHTML = html;
     }
 
     // ============ 列表页 ============
@@ -720,6 +1126,8 @@
     // ============ 详情页 ============
     async function showDetail(deviceId) {
         currentView = 'detail'; currentDeviceId = deviceId;
+        currentHeartbeatDetail = null;
+        detailOpenedAt = Date.now();
         document.getElementById('list-container').classList.remove('active');
         document.getElementById('map-container').classList.remove('active');
         document.getElementById('detail-container').classList.add('active');
@@ -807,9 +1215,80 @@
         document.getElementById('detail-app').innerHTML = html;
         window.scrollTo(0, 0);
     }
+    function showHeartbeatDetail(heartbeat, previousHeartbeat) {
+        currentView = 'detail';
+        currentDeviceId = null;
+        currentHeartbeatDetail = { heartbeat, previousHeartbeat };
+        detailOpenedAt = Date.now();
+        document.getElementById('list-container').classList.remove('active');
+        document.getElementById('map-container').classList.remove('active');
+        document.getElementById('history-container').classList.remove('active');
+        document.getElementById('detail-container').classList.add('active');
+
+        const serverTime = heartbeat.serverReceiveTime || heartbeat.serverTime;
+        const gapMs = previousHeartbeat ? (new Date(serverTime).getTime() - new Date(previousHeartbeat.serverReceiveTime || previousHeartbeat.serverTime).getTime()) : null;
+        const name = historyDisplayName(heartbeat);
+
+        let html = `<div class="detail-section"><div class="section-title">📜 心跳详情</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">设备</span><span class="detail-value">${escapeHTML(name)}</span></div>
+            <div class="detail-row"><span class="detail-label">设备ID</span><span class="detail-value" style="font-size:12px;color:#999">${escapeHTML(heartbeat.deviceId || '未知')}</span></div>
+            <div class="detail-row"><span class="detail-label">服务端接收时间</span><span class="detail-value">${fmt(serverTime)}</span></div>
+            <div class="detail-row"><span class="detail-label">客户端上报时间</span><span class="detail-value">${fmt(heartbeat.clientReportTime)}</span></div>
+            <div class="detail-row"><span class="detail-label">与上一条间隔</span><span class="detail-value">${formatGap(gapMs)}</span></div>
+        </div></div>`;
+
+        html += '<div class="detail-columns" style="margin-top:12px">';
+        html += `<div class="detail-section"><div class="section-title">🔋 电量信息</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">当前电量</span><span class="detail-value" style="color:${batColor(Number(heartbeat.batteryPercent) || 0)};font-size:18px;font-weight:700">${maybeValue(heartbeat.batteryPercent)}%</span></div>
+            <div class="detail-row"><span class="detail-label"></span><span class="detail-value" style="width:100%"><div class="battery-bar" style="height:10px"><div class="battery-fill ${batClass(Number(heartbeat.batteryPercent) || 0)}" style="width:${Math.max(0, Math.min(100, Number(heartbeat.batteryPercent) || 0))}%"></div></div></span></div>
+            <div class="detail-row"><span class="detail-label">充电状态</span><span class="detail-value">${heartbeat.isCharging ? '⚡ 充电中' : '未充电'}</span></div>
+            <div class="detail-row"><span class="detail-label">省电模式</span><span class="detail-value">${dot(!heartbeat.powerSaveMode)} ${heartbeat.powerSaveMode ? '已开启' : '未开启'}</span></div>
+        </div></div>`;
+
+        html += `<div class="detail-section"><div class="section-title">📶 网络状态</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">网络连接</span><span class="detail-value">${dot(heartbeat.networkStatus !== 'NONE')} ${maybeValue(heartbeat.networkStatus)}</span></div>
+            <div class="detail-row"><span class="detail-label">WiFi开关</span><span class="detail-value">${dot(heartbeat.wifiEnabled)} ${heartbeat.wifiEnabled ? '已开启' : '已关闭'}</span></div>
+            <div class="detail-row"><span class="detail-label">WiFi连接</span><span class="detail-value">${dot(heartbeat.wifiConnected)} ${heartbeat.wifiConnected ? '已连接' : '未连接'}</span></div>
+            <div class="detail-row"><span class="detail-label">WiFi名称</span><span class="detail-value">${escapeHTML(String(maybeValue(heartbeat.wifiSsid)))}</span></div>
+            <div class="detail-row"><span class="detail-label">蜂窝数据</span><span class="detail-value">${dot(heartbeat.mobileDataEnabled)} ${heartbeat.mobileDataEnabled ? '已开启' : '已关闭'}</span></div>
+            <div class="detail-row"><span class="detail-label">飞行模式</span><span class="detail-value">${dot(!heartbeat.airplaneMode)} ${heartbeat.airplaneMode ? '✈️ 已开启' : '未开启'}</span></div>
+        </div></div>`;
+
+        html += `<div class="detail-section"><div class="section-title">🔔 音量设置</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">铃声音量</span><span class="detail-value">${volumeBar(heartbeat.ringVolume, heartbeat.ringVolumeMax)} ${maybeValue(heartbeat.ringVolume, 0)}/${maybeValue(heartbeat.ringVolumeMax, 0)}</span></div>
+            <div class="detail-row"><span class="detail-label">媒体音量</span><span class="detail-value">${volumeBar(heartbeat.mediaVolume, heartbeat.mediaVolumeMax)} ${maybeValue(heartbeat.mediaVolume, 0)}/${maybeValue(heartbeat.mediaVolumeMax, 0)}</span></div>
+            <div class="detail-row"><span class="detail-label">响铃模式</span><span class="detail-value">${dot(heartbeat.ringerMode === 'NORMAL')} ${heartbeat.ringerMode === 'NORMAL' ? '正常' : heartbeat.ringerMode === 'VIBRATE' ? '振动' : heartbeat.ringerMode === 'SILENT' ? '静音' : '未知'}</span></div>
+            <div class="detail-row"><span class="detail-label">勿扰模式</span><span class="detail-value">${dot(heartbeat.zenMode === 'OFF')} ${maybeValue(heartbeat.zenMode)}</span></div>
+        </div></div>`;
+
+        html += `<div class="detail-section"><div class="section-title">📍 位置信息</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">纬度</span><span class="detail-value">${maybeValue(heartbeat.latitude, '未获取')}</span></div>
+            <div class="detail-row"><span class="detail-label">经度</span><span class="detail-value">${maybeValue(heartbeat.longitude, '未获取')}</span></div>
+            <div class="detail-row"><span class="detail-label">精度</span><span class="detail-value">${heartbeat.accuracy ? heartbeat.accuracy + ' 米' : '未知'}</span></div>
+            <div class="detail-row"><span class="detail-label">定位时间</span><span class="detail-value">${heartbeat.locationTime ? fmt(heartbeat.locationTime) : '未知'}</span></div>
+            <div class="detail-row"><span class="detail-label">定位来源</span><span class="detail-value">${maybeValue(heartbeat.locationProvider)}</span></div>
+        </div></div>`;
+
+        html += `<div class="detail-section"><div class="section-title">⚙️ 权限与服务</div><div class="section-body">
+            <div class="detail-row"><span class="detail-label">定位权限</span><span class="detail-value">${dot(heartbeat.locationPermissionGranted)} ${heartbeat.locationPermissionGranted ? '已授予' : '未授予'}</span></div>
+            <div class="detail-row"><span class="detail-label">定位服务</span><span class="detail-value">${dot(heartbeat.locationServiceEnabled)} ${heartbeat.locationServiceEnabled ? '已开启' : '未开启'}</span></div>
+            <div class="detail-row"><span class="detail-label">通知权限</span><span class="detail-value">${dot(heartbeat.notificationEnabled)} ${heartbeat.notificationEnabled ? '已开启' : '未开启'}</span></div>
+            <div class="detail-row"><span class="detail-label">电池优化</span><span class="detail-value">${dot(heartbeat.ignoreBatteryOptimization)} ${heartbeat.ignoreBatteryOptimization ? '已忽略（推荐）' : '未忽略'}</span></div>
+            <div class="detail-row"><span class="detail-label">后台服务</span><span class="detail-value">${dot(heartbeat.appMonitorRunning)} ${heartbeat.appMonitorRunning ? '运行中' : '未运行'}</span></div>
+        </div></div>`;
+        html += '</div>';
+
+        document.getElementById('detail-app').innerHTML = html;
+        window.scrollTo(0, 0);
+    }
+    function handleDetailOverlayClick() {
+        if (Date.now() - detailOpenedAt < 350) return;
+        goBack();
+    }
 
     function goBack() {
         document.getElementById('detail-container').classList.remove('active');
+        currentHeartbeatDetail = null;
 
         if (currentTab === 'list') {
             document.getElementById('list-container').classList.add('active');
@@ -867,8 +1346,14 @@
         if (currentTab === 'list' && currentView === 'list') await renderList();
         else if (currentTab === 'history' && currentView === 'list') await renderHistory();
         else if (currentTab === 'map' && currentView === 'list') await initMap();
+        else if (currentTab === 'history' && currentView === 'detail' && currentHeartbeatDetail) showHeartbeatDetail(currentHeartbeatDetail.heartbeat, currentHeartbeatDetail.previousHeartbeat);
         else if (currentView === 'detail' && currentDeviceId) await showDetail(currentDeviceId);
     }
+
+    window.addEventListener('resize', function() {
+        if (currentTab === 'history' && currentView === 'list') renderHistoryChart(historyState.records || []);
+        else if (historyState.chart) historyState.chart.resize();
+    });
 
     renderList();
     </script>

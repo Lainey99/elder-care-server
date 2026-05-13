@@ -186,12 +186,56 @@ app.get('/api/devices/remarks', (req, res) => {
   res.json(remarks);
 });
 
+function parsePositiveInt(value, fallback, max) {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function parseSortOrder(value) {
+  return String(value || '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+}
+
+function parseISODate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toSQLiteLocalDateTime(date) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 // 查询最近心跳记录
 app.get('/api/heartbeats', (req, res) => {
-  const limit = parseInt(req.query.limit) || 100;
-  const rows = db.prepare(
-    'SELECT id, device_id, payload FROM heartbeats ORDER BY id DESC LIMIT ?'
-  ).all(limit);
+  const limit = parsePositiveInt(req.query.limit, 100, 5000);
+  const order = parseSortOrder(req.query.order);
+  const startDate = parseISODate(req.query.start);
+  const endDate = parseISODate(req.query.end);
+  const deviceId = req.query.deviceId ? String(req.query.deviceId) : '';
+
+  let sql = 'SELECT id, device_id, payload, created_at FROM heartbeats';
+  const conditions = [];
+  const params = [];
+
+  if (deviceId) {
+    conditions.push('device_id = ?');
+    params.push(deviceId);
+  }
+  if (startDate) {
+    conditions.push('created_at >= ?');
+    params.push(toSQLiteLocalDateTime(startDate));
+  }
+  if (endDate) {
+    conditions.push('created_at <= ?');
+    params.push(toSQLiteLocalDateTime(endDate));
+  }
+  if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+  sql += ` ORDER BY id ${order} LIMIT ?`;
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params);
 
   const remarks = {};
   for (const r of db.prepare('SELECT device_id, remark FROM device_remarks').all()) {
@@ -200,18 +244,15 @@ app.get('/api/heartbeats', (req, res) => {
 
   const result = rows.map(row => {
     const data = JSON.parse(row.payload);
+    const serverReceiveTime = data.serverReceiveTime || row.created_at;
     return {
+      ...data,
       id: row.id,
       deviceId: row.device_id,
-      elderName: remarks[row.device_id] || row.device_id,
-      batteryPercent: data.batteryPercent,
-      isCharging: data.isCharging,
-      networkStatus: data.networkStatus,
-      mobileDataEnabled: data.mobileDataEnabled,
-      ringerMode: data.ringerMode,
+      elderName: remarks[row.device_id] || data.elderName || row.device_id,
       isOnline: isDeviceOnline(data),
-      clientReportTime: data.clientReportTime,
-      serverTime: data.serverReceiveTime
+      serverReceiveTime,
+      serverTime: serverReceiveTime
     };
   });
 
