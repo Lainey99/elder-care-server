@@ -665,7 +665,7 @@
                 <span class="history-name">${escapeHTML(h.elderName)}</span>
                 <span class="history-time">${fmt(h.clientReportTime || h.serverTime)}</span>
                 <span style="font-size:13px;color:${batColor(h.batteryPercent)}">🔋${h.batteryPercent}%</span>
-                <span style="font-size:12px;color:#666">${h.networkStatus === 'WIFI' ? '📶' : h.networkStatus === 'MOBILE' ? '📱' : '❌'}</span>
+                <span style="font-size:12px;color:#666">${h.networkStatus === 'WIFI' ? '🛜' : h.networkStatus === 'MOBILE' ? '📶' : '❌'}</span>
                 <span class="history-badge ${h.isOnline ? 'online' : 'offline'}">${h.isOnline ? '在线' : '离线'}</span>
             </div>`;
         }
@@ -707,7 +707,7 @@
                 </div>
                 <div class="device-body"><div class="status-grid">
                     <div class="status-item"><div class="status-icon" style="background:${batColor(det.batteryPercent)}15"><span>${det.isCharging?'⚡':'🔋'}</span></div><div class="status-text"><div class="status-label">电量</div><div class="status-value" style="color:${batColor(det.batteryPercent)}">${det.batteryPercent}%</div><div class="battery-bar"><div class="battery-fill ${batClass(det.batteryPercent)}" style="width:${det.batteryPercent}%"></div></div></div></div>
-                    <div class="status-item"><div class="status-icon" style="background:${det.networkStatus==='NONE'?'#FFEBEE':'#E8F5E9'}"><span>${det.networkStatus==='WIFI'?'📶':det.networkStatus==='MOBILE'?'📱':'❌'}</span></div><div class="status-text"><div class="status-label">网络</div><div class="status-value">${det.networkStatus}</div></div></div>
+                    <div class="status-item"><div class="status-icon" style="background:${det.networkStatus==='NONE'?'#FFEBEE':'#E8F5E9'}"><span>${det.networkStatus==='WIFI'?'🛜':det.networkStatus==='MOBILE'?'📶':'❌'}</span></div><div class="status-text"><div class="status-label">网络</div><div class="status-value">${det.networkStatus}</div></div></div>
                     <div class="status-item"><div class="status-icon" style="background:${det.mobileDataEnabled?'#E8F5E9':'#FFEBEE'}"><span>📡</span></div><div class="status-text"><div class="status-label">蜂窝数据</div><div class="status-value">${det.mobileDataEnabled?'已开启':'已关闭'}</div></div></div>
                     <div class="status-item"><div class="status-icon" style="background:${det.ringerMode==='SILENT'||det.ringVolume===0?'#FFEBEE':'#F3E5F5'}"><span>${det.ringerMode==='SILENT'?'🔇':det.ringerMode==='VIBRATE'?'📳':'🔔'}</span></div><div class="status-text"><div class="status-label">铃声</div><div class="status-value">${det.ringVolume}/${det.ringVolumeMax}</div>${volumeBar(det.ringVolume,det.ringVolumeMax)}</div></div>
                     <div class="status-item"><div class="status-icon" style="background:${det.airplaneMode?'#FFEBEE':'#E0F7FA'}"><span>${det.airplaneMode?'✈️':'📡'}</span></div><div class="status-text"><div class="status-label">${det.airplaneMode?'飞行模式':'WiFi'}</div><div class="status-value">${det.airplaneMode?'已开启':(det.wifiSsid||'未连接')}</div></div></div>
