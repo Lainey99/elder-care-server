@@ -66,6 +66,18 @@ app.post('/api/device/event', (req, res) => {
   const deviceId = data.deviceId;
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
 
+  const eventId = data.eventId;
+  if (eventId) {
+    const existing = db.prepare(
+      `SELECT id FROM events
+       WHERE device_id = ? AND json_extract(payload, '$.eventId') = ?`
+    ).get(deviceId, eventId);
+    if (existing) {
+      console.log(`事件重复: ${deviceId} | ${data.eventType} | ${eventId}`);
+      return res.json({ success: true, duplicated: true });
+    }
+  }
+
   data.serverReceiveTime = new Date().toISOString();
 
   db.prepare('INSERT INTO events (device_id, payload) VALUES (?, ?)')

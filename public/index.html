@@ -73,6 +73,20 @@
         .history-empty-panel .empty-text { font-size: 15px; color: #666; margin-bottom: 6px; }
         .history-empty-panel .empty-hint { font-size: 12px; }
         .history-detail-meta { font-size: 12px; color: #999; margin-top: 6px; }
+        .events-shell { display: grid; gap: 12px; }
+        .events-toolbar { background: white; border-radius: 14px; padding: 14px 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); display: grid; gap: 12px; }
+        .events-device-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .events-device-btn { border: 1px solid #d9def7; background: #f7f8ff; color: #5b68c7; border-radius: 999px; padding: 8px 12px; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+        .events-device-btn.active, .events-device-btn:hover { background: #667eea; color: white; border-color: #667eea; }
+        .events-summary { font-size: 12px; color: #888; }
+        .events-card { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; }
+        .events-card-head { padding: 14px 16px 0; }
+        .events-card-title { font-size: 15px; font-weight: 600; color: #444; }
+        .events-card-note { font-size: 12px; color: #999; margin-top: 4px; }
+        .events-empty { padding: 56px 20px; text-align: center; color: #999; }
+        .events-empty .empty-icon { font-size: 40px; margin-bottom: 10px; }
+        .events-empty .empty-text { font-size: 15px; color: #666; margin-bottom: 6px; }
+        .events-empty .empty-hint { font-size: 12px; }
         @media (max-width: 899px) {
             .history-toolbar { padding: 12px; gap: 10px; }
             .history-toolbar-row { align-items: flex-start; }
@@ -86,6 +100,9 @@
             .history-chart-title { font-size: 14px; }
             .history-chart-note { font-size: 11px; line-height: 1.5; }
             #history-chart { height: 520px; }
+            .events-toolbar { padding: 12px; }
+            .events-device-btn { width: 100%; text-align: center; min-height: 40px; }
+            .events-card-head { padding: 12px 12px 0; }
         }
 
         .status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -159,6 +176,8 @@
         #list-container.active { display: block; }
         #history-container { display: none; }
         #history-container.active { display: block; }
+        #events-container { display: none; }
+        #events-container.active { display: block; }
         #map-container { display: none; }
         #map-container.active { display: block; }
         #detail-container { display: none; }
@@ -270,6 +289,7 @@
     <div class="tab-bar" id="tab-bar">
         <div class="tab active" onclick="switchTab('list')">📋 设备列表</div>
         <div class="tab" onclick="switchTab('history')">📜 上报记录</div>
+        <div class="tab" onclick="switchTab('events')">📌 事件记录</div>
         <div class="tab" onclick="switchTab('map')">🗺️ 设备地图</div>
     </div>
 
@@ -281,6 +301,12 @@
 
     <div id="history-container">
         <div class="container" id="history-app">
+            <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
+        </div>
+    </div>
+
+    <div id="events-container">
+        <div class="container" id="events-app">
             <div class="loading"><div class="spinner"></div><div style="margin-top:12px">加载中...</div></div>
         </div>
     </div>
@@ -328,6 +354,7 @@
     let mapControlsReady = false;
         let currentHeartbeatDetail = null;
         let historyRenderVersion = 0;
+        let eventsRenderVersion = 0;
         let detailOpenedAt = 0;
     const mapPointLookup = new Map();
     const locationTextCache = new Map();
@@ -339,6 +366,11 @@
             chart: null,
             records: [],
             devices: []
+        };
+        const eventsState = {
+            deviceId: '',
+            devices: [],
+            events: []
         };
 
     async function fetchJSON(url) { const res = await fetch(url); return res.json(); }
@@ -589,12 +621,13 @@
     function switchTab(tab) {
         mapInitSequenceId++;
         currentTab = tab;
-        var tabMap = { list: 0, history: 1, map: 2 };
+        var tabMap = { list: 0, history: 1, events: 2, map: 3 };
         document.querySelectorAll('.tab').forEach((el, i) => {
             el.classList.toggle('active', tabMap[tab] === i);
         });
         document.getElementById('list-container').classList.toggle('active', tab === 'list');
         document.getElementById('history-container').classList.toggle('active', tab === 'history');
+        document.getElementById('events-container').classList.toggle('active', tab === 'events');
         document.getElementById('map-container').classList.toggle('active', tab === 'map');
         document.getElementById('detail-container').classList.remove('active');
         var toggleBtn = document.getElementById('map-list-toggle');
@@ -607,6 +640,8 @@
             renderList();
         } else if (tab === 'history') {
             renderHistory();
+        } else if (tab === 'events') {
+            renderEvents();
         } else if (tab === 'map') {
             triggerMapInitSequence();
         }
@@ -1079,6 +1114,72 @@
         }
     }
 
+    // ============ 事件记录 ============
+    function renderEventsShell() {
+        const app = document.getElementById('events-app');
+        const selectedDevice = eventsState.devices.find(function(device) { return device.deviceId === eventsState.deviceId; });
+        const selectedName = selectedDevice ? (selectedDevice.elderName || selectedDevice.deviceId) : '未选择设备';
+        const timelineHTML = eventsState.events.length ? `<div class="timeline">
+            ${eventsState.events.map(function(e) {
+                return `<div class="timeline-item"><div class="timeline-dot"><span class="icon">${evtIcon(e.eventType)}</span></div><div class="timeline-content"><div class="timeline-title">${escapeHTML(e.eventType || '未知事件')}</div><div class="timeline-time">${fmt(e.eventTime || e.serverReceiveTime)}</div>${e.oldValue || e.newValue ? `<div class="timeline-detail">${e.oldValue ? '旧值: ' + escapeHTML(e.oldValue) : ''}${e.oldValue && e.newValue ? '<br>' : ''}${e.newValue ? '新值: ' + escapeHTML(e.newValue) : ''}</div>` : ''}</div></div>`;
+            }).join('')}
+        </div>` : `<div class="events-empty"><div class="empty-icon">📭</div><div class="empty-text">当前设备暂无事件记录</div><div class="empty-hint">可以切换其他设备继续查看。</div></div>`;
+
+        app.innerHTML = `<div class="events-shell">
+            <div class="events-toolbar">
+                <div class="events-device-list">
+                    ${eventsState.devices.map(function(device) {
+                        const active = device.deviceId === eventsState.deviceId ? ' active' : '';
+                        return `<button type="button" class="events-device-btn${active}" onclick="selectEventsDevice(decodeURIComponent('${encodeURIComponent(device.deviceId)}'))">${escapeHTML(device.elderName || device.deviceId)}</button>`;
+                    }).join('')}
+                </div>
+                <div class="events-summary">当前设备：${escapeHTML(selectedName)}，最近事件 ${eventsState.events.length} 条</div>
+            </div>
+            <div class="events-card">
+                <div class="events-card-head">
+                    <div class="events-card-title">最近事件</div>
+                    <div class="events-card-note">按时间倒序展示当前设备最近发生的状态变化事件。</div>
+                </div>
+                ${timelineHTML}
+            </div>
+        </div>`;
+    }
+    function selectEventsDevice(deviceId) {
+        if (!deviceId || deviceId === eventsState.deviceId) return;
+        renderEvents(deviceId);
+    }
+    async function renderEvents(nextDeviceId) {
+        const app = document.getElementById('events-app');
+        app.innerHTML = '<div class="loading"><div class="spinner"></div><div style="margin-top:12px">正在加载事件记录...</div></div>';
+
+        const renderVersion = ++eventsRenderVersion;
+
+        try {
+            const devices = await fetchJSON(`${API}/devices`);
+            if (renderVersion !== eventsRenderVersion) return;
+            if (!devices.length) {
+                eventsState.deviceId = '';
+                eventsState.devices = [];
+                eventsState.events = [];
+                app.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">暂无设备数据</div><div class="empty-hint">设备上报后即可查看事件记录。</div></div>';
+                return;
+            }
+
+            const preferredDeviceId = nextDeviceId || eventsState.deviceId;
+            const selectedDevice = devices.find(function(device) { return device.deviceId === preferredDeviceId; }) || devices[0];
+            const events = await fetchJSON(`${API}/device/${selectedDevice.deviceId}/events?limit=50`);
+            if (renderVersion !== eventsRenderVersion) return;
+
+            eventsState.deviceId = selectedDevice.deviceId;
+            eventsState.devices = devices;
+            eventsState.events = events || [];
+            renderEventsShell();
+        } catch (e) {
+            if (renderVersion !== eventsRenderVersion) return;
+            app.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">加载事件记录失败</div><div class="empty-hint">请稍后刷新重试。</div></div>';
+        }
+    }
+
     // ============ 列表页 ============
     async function renderList() {
         const app = document.getElementById('app');
@@ -1298,6 +1399,10 @@
             document.getElementById('history-container').classList.add('active');
             currentView = 'list';
             renderHistory();
+        } else if (currentTab === 'events') {
+            document.getElementById('events-container').classList.add('active');
+            currentView = 'list';
+            renderEvents();
         } else {
             document.getElementById('map-container').classList.add('active');
             currentView = 'list';
@@ -1333,6 +1438,7 @@
                 if (currentView === 'detail') goBack();
                 else if (currentTab === 'list') await renderList();
                 else if (currentTab === 'history') await renderHistory();
+                else if (currentTab === 'events') await renderEvents();
                 else if (currentTab === 'map') await initMap();
             } else {
                 alert('删除失败：' + (result.error || '未知错误'));
@@ -1345,6 +1451,7 @@
     async function refresh() {
         if (currentTab === 'list' && currentView === 'list') await renderList();
         else if (currentTab === 'history' && currentView === 'list') await renderHistory();
+        else if (currentTab === 'events' && currentView === 'list') await renderEvents();
         else if (currentTab === 'map' && currentView === 'list') await initMap();
         else if (currentTab === 'history' && currentView === 'detail' && currentHeartbeatDetail) showHeartbeatDetail(currentHeartbeatDetail.heartbeat, currentHeartbeatDetail.previousHeartbeat);
         else if (currentView === 'detail' && currentDeviceId) await showDetail(currentDeviceId);
